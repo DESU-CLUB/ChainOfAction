@@ -107,7 +107,10 @@ class ActionAgent:
             error = None
             while retry > 0:
                 try:                
-                    pass
+                    code_pattern = re.compile(r"```(?:python|py)(.*?)```", re.DOTALL)
+                    code = "\n".join(code_pattern.findall(message.content))
+                    functions = []
+                    assert len(list(code))) >0, "NO functions found"
                 except:
                     pass
         
