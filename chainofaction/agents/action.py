@@ -114,8 +114,19 @@ class ActionAgent:
                     parse_manager.analyze_code()
                     functions = parse_manager.grab_functions()
                     
-                    assert len(list(code)) >0, "NO functions found"
+                    assert len(functions) >0, "NO functions found"
+                    #assert that function given has same number of params
 
-                except:
-                    pass
+
+
+                except Exception as e:
+                    retry -=1
+                    error = e
+                    time.sleep(1)
+            return f"Error parsing action response (before program execution): {error}"
         
+
+    def summarize_chatlog(self,events):
+        pass
+
+    
