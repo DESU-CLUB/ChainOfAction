@@ -4,7 +4,7 @@ import chainofaction.utils as U
 from langchain.chat_models import ChatOpenAI
 from langchain.prompts import SystemMessagePromptTemplate
 from langchain.schema import AIMessage, HumanMessage, SystemMessage
-
+from chainofaction.parser import parser
 import openai
 
 class ActionAgent:
@@ -106,11 +106,16 @@ class ActionAgent:
             retry = 3
             error = None
             while retry > 0:
-                try:                
+                try:         
+                    #Finds code snippet within GPT completion       
                     code_pattern = re.compile(r"```(?:python|py)(.*?)```", re.DOTALL)
                     code = "\n".join(code_pattern.findall(message.content))
-                    functions = []
-                    assert len(list(code))) >0, "NO functions found"
+                    parse_manager = parser.Parser()
+                    parse_manager.analyze_code()
+                    functions = parse_manager.grab_functions()
+                    
+                    assert len(list(code)) >0, "NO functions found"
+
                 except:
                     pass
         
