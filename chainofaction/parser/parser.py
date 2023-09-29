@@ -63,10 +63,11 @@ class Parser:
     
 
 
-
+""" 
+Testing code: Delete before deployment
 a = Parser()
 
-a.analyze_code("""
+a.analyze_code(\"""
 class a:
     async def foo(hi):
         pass
@@ -78,4 +79,5 @@ class a:
 def wew():
     pass
 
-""")
+\""")
+ """
