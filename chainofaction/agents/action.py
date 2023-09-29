@@ -76,7 +76,7 @@ class ActionAgent:
             if self.execution_error:
                 if error_messages:
                     error ="\n".join(error_messages)
-                    onservation = f"Execution Error:\n{error}\n\n"
+                    observation = f"Execution Error:\n{error}\n\n"
 
             if self.chat_log:
                 if chat_messages:
@@ -111,7 +111,7 @@ class ActionAgent:
                     code_pattern = re.compile(r"```(?:python|py)(.*?)```", re.DOTALL)
                     code = "\n".join(code_pattern.findall(message.content))
                     parse_manager = parser.Parser()
-                    parse_manager.analyze_code()
+                    parse_manager.analyze_code(code)
                     functions = parse_manager.grab_functions()
                     
                     assert len(functions) >0, "NO functions found"
