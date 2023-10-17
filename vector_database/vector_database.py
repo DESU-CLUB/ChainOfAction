@@ -130,9 +130,6 @@ if chroma.is_empty():
 question_text = "For a string x, find the length of the longest substring such that every character must be unique."
 # print(question_text)
 
-#check for the distance type
-#check for the embedding type
-
 # Retrieve relevant context
 relevant_chunks = chroma.query(
     query_texts=[question_text],
