@@ -2,25 +2,23 @@ import openai
 import os
 import subprocess
 import ast
-import skillcreator
-import skills
+from chainofaction.skill import skill_library
+from chainofaction.agents import skillcreator
 #This is just some sample code to brainstorm for the environment
 
 class Environment:
     def __init__(self):
-        self.db = skills.ChromaWithUpsert()
+        self.db = ChromaWithUpsert()
         self.init_db()
-        self.agent = skillcreator.Agent(self.db)
-        self.running_id = 0
+        self.agent = Agent(self.db)
 
 
     def reset(self):
-        self.db = skills.ChromawithUpsert()
-        self.Agent = skillcreator.Agent(self.db)
+        self.db = ChromawithUpsert()
+        self.Agent = Agent(self.db)
 
     def init_db(self):
         self.db.init()
-
     #This runs a python script and returns the output
     def run_script(self, file_path, input_data = None):
         try:
@@ -38,16 +36,8 @@ class Environment:
         except subprocess.CalledProcessError as e:
             return None
 
-    def step(self, problem, cases):
+    def step(problem):
         soln = self.agent.get_response(problem,cases)
-        if soln:
-            code, desc, title = soln
-            texts = "\n".join([str(self.running_id),str(title),(problem),(desc)])
-            self.db.upsert_texts(texts, 
-                                metadata = [{"id": self.running_id, "title":title,"problem_text":problem,"skill_description":desc}\
-                                            for (self.running_id, title, problem, desc) in zip(id, title, problem, desc)
-                                            ])
-            self.running_id+=1
         return soln
 
     #This is the main function
@@ -61,9 +51,10 @@ class Environment:
         #placeholder
         pass
 
+    def reset:
 
-    
+#def sample_from_dataset():
 
 
 
-
+print(main())
