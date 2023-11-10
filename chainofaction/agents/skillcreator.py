@@ -8,36 +8,67 @@ import torch
 import openai
 import itertools
 import random
-import environment
+#import environment
 import tiktoken
 
-class NoCasesException(Exception):
-    pass
 
-class SolutionNotFoundException(Exception):
-    pass
 
+####### HELPER FUNCTIONS ##########
+
+#This class stores the history of the conversation which is used as context
 class MemoryList(list): #Sliding window implementation for now
     def __init__(self, *args, max_tokens = 3500):
         super().__init__(*args)
         self.max_tokens = max_tokens
-        self.tokenizer = tiktoken.encoding_for_model("gpt-4")
+        self.tokenizer = tiktoken.encoding_for_model("gpt-3.5-turbo-16k")
         
+    #Add smth to the list -> remove first item until total tokens < 4000
     def append(self, item):
+        print(item)
         total_tokens = self.check_tokens()
-        while len(self.tokenizer.encode(item)) + total_tokens > self.max_tokens:
+        item2 = item["content"]
+        while len(self.tokenizer.encode(item2)) + total_tokens > self.max_tokens:
+            if len(self.tokenizer.encode(item2)) > self.max_tokens:
+                self.summarize()
+                raise Exception("Item too long")
             self.handle_overflow()
             total_tokens = self.check_tokens()
         super().append(item)
 
+    #Helper to check no of tokens
     def check_tokens(self):
-        return sum(len(self.tokenizer.encode(item)) for item in self)
+        return sum(len(self.tokenizer.encode(item['content'])) for item in self)
     
+    #Helper to handle overflow
     def handle_overflow(self):
-        self.pop(0)
+        if len(self) >0:
+            self.pop(0)
 
-def generate(messages, max_tokens = 2048, temperature = 0.0, model = "gpt-4"):
-    if  model in ["gpt-3.5-turbo", "gpt-4"]:
+    #For now it will just be a signal to terminate the generation
+    def summarize(self):
+        print("Summarizing") #End goal is to use gpt-16k to do this
+
+
+#This is a helper function to convert skills retrieved from the vector DB
+#into the relevant code
+def search_files(skills):
+    data_dir = "chainofaction/data/code"
+    all_code = []
+    for skill in skills:
+        print(skill)
+        with open(os.path.join(data_dir,os.path.splitext(skill)[0]+'.py')) as f:
+            lines = f.readlines()
+            res = ""
+            for i,line in enumerate(lines):
+                res+= "\n"+line.strip() if not i else line.strip()
+        all_code.append(res)
+    return all_code
+     
+        
+
+#This code handles the generation API calls
+def generate(messages, max_tokens = 2048, temperature = 0.0, model = "gpt-3.5-turbo-16k"):
+    if  model in ["gpt-3.5-turbo-16k", "gpt-3.5-turbo-16k"]:
         params = {
             "model": model,
             "max_tokens": max_tokens,
@@ -47,9 +78,8 @@ def generate(messages, max_tokens = 2048, temperature = 0.0, model = "gpt-4"):
         for retry in range(3):
             try:
                 return openai.ChatCompletion.create(**params)["choices"][0]["message"]["content"]
-            except:
-                pass
-        raise Exception("Failed to generate")
+            except Exception as e:
+                return e
     
     # For older models, use the completion API with max_tokens=1024
     params = {
@@ -64,77 +94,66 @@ def generate(messages, max_tokens = 2048, temperature = 0.0, model = "gpt-4"):
         except:
             pass
 
+
+
+########### AGENT CLASS ############
 class Agent:
-    def __init__(self,db, model = "gpt-4", max_tokens = 2048, temperature = 0.0, explore_ratio = 0.3, max_count = 0):
+    def __init__(self,db,environment, model = "gpt-3.5-turbo-16k", max_tokens = 2048, temperature = 0.0, explore_ratio = 0.3, max_count = 0):
+        '''
+        Agent: A class that handles the generation of skills and the interaction with the environment
+        model: the model to use for generation
+        max_tokens: the maximum number of tokens to generate
+        temperature: the temperature to use for generation
+        explore_ratio: the ratio of times to explore (deprecated for now)
+        max_count: the maximum number of times to generate (deprecated for now)
+        db: the vector database to use
+        '''
         self.model = model
         self.max_tokens = max_tokens
         self.temperature = temperature
         self.message = MemoryList(max_tokens = 3500)
         self.db = db
         self.explore_ratio = explore_ratio 
-        self.max_count = max_count       
+        self.max_count = max_count  
+        self.environment = environment     
 
-    def get_prompt(self,task):
-        with open(f"../prompts/{task}") as f:
+    def get_prompt(self,task): #Helper function to get the prompt
+        with open(f"chainofaction/prompts/{task}") as f:
             return f.read().strip()
 
-    def decompose(self,problem):
+    def decompose(self,problem): #Helper function to decompose the problem into steps
         decompose = self.get_prompt("decompose.txt")
         decompose += "\n\n" + problem
-        self.message.append([{"role": "user", "content": decompose}])
+        self.message.append({"role": "user", "content": decompose})
 
-        for retry in range(3):
+        for retry in range(3): #Loop to retry if generation fails
             try:
-                skills = generate(decompose, max_tokens = 2048, temperature = 0.0, model = "gpt-4")
+                skills = generate(self.message, max_tokens = 2048, temperature = 0.0, model = "gpt-3.5-turbo-16k")
+                print(skills)
                 self.message.append({"role": "assistant", "content": skills})
                 return skills
-            except Exception as e:
+            except Exception as e: #Add error for model to debug
                 print("Error: Failed to generate response")
-                self.message.append({"role":"user","content": f"Failed to execute solution generation: {type(e)}"})
+                self.message.append({"role":"user","content": f"Failed to execute solution generation: {e}"})
     
-    def write_soln(self, problem, skills, max_radius = 1):
-        soln_writer = self.get_prompt("soln_writer.txt") 
-        soln_writer += "\n\n" + problem
-        pattern = r'^(\d+:.*?)(?=\d+:|$)'
-        sentences = re.findall(pattern, skills, re.MULTILINE)
-        for retry in range(3):
-            try:
-                skill_index = 0
-                while skill_index < len(sentences):
-                  skill = sentences[skill_index]
-                  ans = self.db.query(skill)
-                  if ans: #and random.rand() > self.explore_ratio:(Will implement next)
-                    soln_writer+= "\n\nHere is the skill required: \n" + skill + "\n\n Here is the Python code: \n"+ans
-                  else:
-                    """   if self.max_count < 3:
-                         newAgent = Agent()
-                         ans = newAgent.get_response(skill, self.max_count+1)
-                         soln_writer+= "\n\nHere is the skill required: \n" + skill + "\n\n Here is the Python code: \n"+ans """
-                    
-                    for i in range(max_radius):
-                        if skill<len(sentences)-i:
-                            skill = skill+ skill[skill_index+i] #Merge the steps
-                            ans = self.db.query(skill)
-                            if ans:
-                              break  
-                                
-                        if ans:
-                            soln_writer+= "\n\nHere is the skill required: \n" + skill + "\n\n Here is the Python code: \n"+ans
-                        else:
-                            soln_writer += "\n\n Here is the skill required: \n" + skill + "\n\n There is no code given for this skill"
-
-                response = generate(soln_writer, max_tokens = 2048, temperature = 0.0, model = "gpt-4")
-                soln = "\n\n".join(re.findall(r"```python\n(.*?)```", response,  re.DOTALL))
-                return soln
-            except Exception as e:
-                print("Error: Failed to generate response")
-                self.message.append({"role":"user","content": f"Failed to execute solution generation: {type(e)}"})
-        
-
     
-    def rewrite_soln(self, problem, steps, output, retry = 0):
+       
+    def rewrite_soln(self, problem, steps, output, fn_head): #Helper function to write/rewrite the solution
+        """
+        Helper function to write/rewrite the solution.
+
+        Args:
+            problem (str): The problem statement.
+            steps (str): The steps taken to solve the problem.
+            output (str): The current output error.
+
+        Returns:
+            str: The generated solution.
+        """
         rewrite = self.get_prompt("soln.txt")
-        rewrite += problem + "\n\n" + output
+        rewrite  = rewrite.replace("{Qn}",problem)+ f'\n\nThe current output error is {output}'
+        rewrite = rewrite.replace("{Steps}",steps)
+        rewrite = rewrite.replace("{fn_head}",fn_head)
         pattern = r'^(\d+:.*?)(?=\d+:|$)'
         skills = re.findall(pattern, steps, re.MULTILINE)
 
@@ -143,39 +162,54 @@ class Agent:
                 skill_index = 0
                 skills_used = []
                 skill = skills[skill_index]
-                while skill_index < len(skills):
-                    relevant_chunks = self.db.query([skill],n_results = 3)
+                while skill_index < len(skills): #Loop through all the skills
+                    #Query vector DB for relevant skills
+                    relevant_chunks = self.db.query([skill],n_results = 1) 
                     skills_accepted = []
+                    #Grab titles
                     for i, chunk in enumerate(relevant_chunks['documents'][0]):
-                        if relevant_chunks['distances'][0]['i'] > 0.8:
-                            skills_accepted.append(chunk)
-                            skills_used.append(chunk)
+                        #print(relevant_chunks['metadatas'][0][i])
+                        if relevant_chunks['distances'][0][i] > 0.8:
+                            skills_accepted.append(relevant_chunks["metadatas"][0][i]['title'])
+                            skills_used.append(relevant_chunks["metadatas"][0][i]['title'])
+
+                    if skill_index == len(skills)-1:
+                        break
+                    #If no skills accepted, merge them
                     if len(skills_accepted) == 0:
                         skill_index +=1
-                        skill = skill[skill_index-1] + " " +skill[skill_index]
+                        skill = skills[skill_index-1] + " " +skills[skill_index]
                     else:
+                        #Else, pick the next skill
                         skill_index +=1
-                        skill = skill[skill_index]
-
-                    self.message.append({"role":"user",})
-                    soln = generate(rewrite, max_tokens = 2048, temperature = 0.0, model = "gpt-4")
-                    self.message.append({"role": "assistant", "content": soln})
+                        print(skill_index,len(skills))
+                        skill = skills[skill_index]
+                #convert skills to code
+                skills_used = search_files(skills_used)
+                #Prompt and generate
+                rewrite = rewrite.replace("{Ref}",'\n\nHere are a list of relevant skills to the question'+'\n'.join(skills_used))
+                self.message.append({"role":"user","content": f"{rewrite}"})
+                soln = generate(self.message, max_tokens = 2048, temperature = 0.0, model = "gpt-3.5-turbo-16k")
+                self.message.append({"role": "assistant", "content": soln})
             except Exception as e:
-                print("Error: Failed to generate response")
-                self.message.append({"role":"user","content": f"Failed to execute solution generation: {type(e)}"})
-            return soln
-    def zeroshot_soln(self, problem):
+                print("Error: Failed to generate response",e)
+                raise e
+                self.message.append({"role":"user","content": f"Failed to execute solution generation: {print(e)}"})
+            return soln if "soln" in locals() else None
+   
+    def zeroshot_soln(self, problem, steps,fn_head):
         try:
-            self.message.append({"role": "user", "content": f"Here is the problem: {problem}\nWrite Python code to solve the problem"})
+            self.message.append({"role": "user", "content": f"Here is the problem: {problem}\nHere are the identified steps: {steps}\nWrite Python code to solve the problem\n Use this function head:{fn_head}"})
             soln = generate(self.message)
-            self.message({"role":"user","content": f"Here is the solution: {soln}"})
+            self.message.append({"role":"assistant","content": f"{soln}"})
             return soln
-        except Exception:
+        except Exception as e:
+            print("ERROR ZERO SHOT")
+            raise e
             return None
-    
-    
+   
 
-    def get_response(self,problem, cases, max_count = 0):
+    def get_response(self,problem, cases, fn_head):
         '''
         problem: description of problem
         '''
@@ -183,10 +217,11 @@ class Agent:
 
         steps = self.decompose(problem)
 
-        soln = self.zeroshot_soln(problem, steps)
+        soln = self.zeroshot_soln(problem, steps, fn_head)
         
         if not soln:
             return None
+    
 
         ###Iterative prompting
         for retry in range(10):
@@ -194,19 +229,24 @@ class Agent:
             #Check if code can get correct answer for test cases
             #If not, prompt for more code
             try:
-                retry = 0
                 passed = True #Dummy variables
                 output = ''
-                output, passed = environment.execute(soln, cases) #Environment implemented in env.py later
+                output, passed = self.environment.execute(soln, cases) #Environment implemented in env.py later
                 for i in range(10):
                     if passed:
                         break
-                    soln = self.rewrite_soln(problem, steps,output,retry = retry)
-                    output, passed = environment.execute(soln, cases)
+                    soln = self.rewrite_soln(problem, steps,output, fn_head)
+                    print(f"\n\nNew SOLN: {soln}\n\n")
+
+                    output, passed = self.environment.execute(soln, cases)
+                if passed:
+                    break
                 break
 
                     
             except Exception as e:
+                print(e)
+                raise e
                 print("Error: Failed to generate response")
                 self.message.append({"role":"user","content": f"Failed to execute iterative prompting: {type(e)}"})
 
@@ -215,11 +255,12 @@ class Agent:
 
         #save into chroma before return statement
         if success:
-            self.message.append({"role": "user", "content": f"Write a description of what this program solves {soln}"})
+            self.message.append({"role": "user", "content": f"Write a description of what this program solves:\n{soln}"})
             desc = generate(self.message)
-            self.message.append({"role": "user", "content": f"Here is the description: {desc}"})
-            return (soln, desc)
+            self.message.append({"role": "user", "content": f"Here is the description: {desc}\n Generate a title for this skill"})
+            title = generate(self.message)
+            return (soln, desc, title)
         return None
-
+    
     def reset(self):
         self.message = MemoryList(max_tokens = 3500)

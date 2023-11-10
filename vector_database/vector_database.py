@@ -27,12 +27,12 @@ load_dotenv()
 
 # Index knowledge base
 # Load data
-datasets = ['cs6101']
+""" datasets = ['cs6101']
 dataset = datasets[0]    # The current dataset to use
 data_root = "data"
 data_dir = os.path.join(data_root, dataset)
 max_docs = -1
-# print("Selected dataset:", dataset)
+# print("Selected dataset:", dataset) """
 
 def load_data_v1(data_dir, data_root):
     passages = pd.read_csv(os.path.join(data_dir, "leetcode.tsv"), sep='\t', header=0)
@@ -45,9 +45,9 @@ def load_data_v1(data_dir, data_root):
     # return passages, qas
     return passages
 # documents, questions = load_data_v1(data_dir, data_root)
-documents = load_data_v1(data_dir, data_root)
+""" documents = load_data_v1(data_dir, data_root)
 documents['indextext'] = documents['title'].astype(str) + "\n" + documents['problem_text'] + "\n" + documents['skill_description']
-
+ """
 class MiniLML6V2EmbeddingFunction(EmbeddingFunction):
     MODEL = SentenceTransformer('all-MiniLM-L6-v2')
     def __call__(self, texts):
@@ -108,7 +108,7 @@ class ChromaWithUpsert:
         """
         return self._collection.query(query_texts=query_texts, n_results=n_results)
     
-# Embed and index documents with Chroma
+""" # Embed and index documents with Chroma
 chroma = ChromaWithUpsert(
     name=f"{dataset}_minilm6v2",
     embedding_function=emb_func,  # you can have something here using /embed endpoint
@@ -168,3 +168,4 @@ print("Answer = ", response['choices'][0]['message']['content'])
 # print("Expected Answer(s) (may not be appear with exact wording in the dataset) = ", questions.answers[question_index])
 
 
+ """
