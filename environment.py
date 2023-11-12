@@ -5,6 +5,7 @@ import subprocess
 import ast
 from chainofaction.agents.skillcreator import Agent
 import vector_database.vector_database as skills
+from chainofaction.agents.zeroShotAgent import ZeroShotAgent
 import json
 import pandas as pd
 import random
@@ -16,7 +17,7 @@ from math import inf
 import collections
 from collections import Counter
 from bisect import bisect_left
-
+import shutil
 #This is just some sample code to brainstorm for the environment
 
 
@@ -93,8 +94,7 @@ class TreeNode:
 
 def load_init_skills(path):
     passages = pd.read_csv(os.path.join(path, "leetcode.tsv"), sep='\t', header=0)
-    passages.head(5)
-    return passages
+    return passages.head(5)
 
 def load_dataset(path):
         passages = pd.read_csv(os.path.join(path, "leetcode.tsv"), sep='\t', header=0)
@@ -106,11 +106,7 @@ def load_cases(path,prob_path):
         cases = json.load(f)
     return cases
 
-def sample(dataset):
-    title = random.choice(dataset['title'].tolist())
-    problem = dataset[dataset['title']==title]['problem_text'].tolist()[0]
-    print(problem)
-    return problem, title
+
 
 
 
@@ -127,13 +123,23 @@ def func_head(code):
 
 class Environment:
     def __init__(self):
-        self.init_db()
-        self.agent = Agent(self.db, self)
-        self.running_id = 0
-        self.dataset = load_dataset("chainofaction/data")
         self.run = 0
         self.check_run()
 
+        self.init_db()
+        self.agent = Agent(self.db, self)
+        #self.agent = ZeroShotAgent(self.db, self) #Zero shot
+        self.running_id = 11
+        self.dataset = load_dataset("chainofaction/data")
+
+    def sample(self,dataset):
+        existing = os.listdir(f"chainofaction/data/run_{self.run}")
+        print(existing)
+        title = random.choice(list(filter(lambda x: f"{x[:-4]}.py" not in existing,dataset['title'].tolist())))
+        problem = dataset[dataset['title']==title]['problem_text'].tolist()[0]
+        print(problem)
+        return problem, title
+    
     def check_run(self):
         #Check current directory for max run_ folders, then create a run_x+1 folder and sets self.run to x+1
         for i in os.listdir("chainofaction/data/"):
@@ -150,7 +156,8 @@ class Environment:
         emb_func = skills.MiniLML6V2EmbeddingFunction()
         data_dir = "chainofaction/data"
         docs = load_init_skills(data_dir)
-        print(docs)
+        for i in docs["title"]:
+            shutil.copy(f"chainofaction/data/code/{i[:-4]}.py",f"chainofaction/data/run_{self.run}/{i[:-4]}.py")
         docs["indextext"] = docs["title"].astype(str) + "\n" + docs["problem_text"] + "\n" + docs["skill_description"]
         self.db= skills.ChromaWithUpsert(
         name=f"{dataset}_minilm6v2",
@@ -169,21 +176,22 @@ class Environment:
 
 
     def step(self):
-        problem,title = sample(self.dataset)
+        problem,title = self.sample(self.dataset)
         cases = load_cases("chainofaction/data/fullcases",title[:-3]+'json')
         fn_head = func_head(title)
-        soln = self.agent.get_response(problem,cases, fn_head)
+        soln = self.agent.get_response(problem,cases, fn_head,title)
         header = func_head(title)
-        if soln:
+        if soln != None:
             code, desc, title = soln
-            with open(f"chainofaction/data/run_{self.run}/{title}.py",'w') as f:
-                f.write(code)
-            texts = "\n".join([str(self.running_id),str(title),(problem),(desc)])
-            self.db.upsert_texts(texts, 
-                                metadata = [{"id": self.running_id, "title":title,"problem_text":problem,"skill_description":desc}\
-                                            for (self.running_id, title, problem, desc) in zip(id, title, problem, desc)
-                                            ])
-            self.running_id+=1
+            if code != None:
+                with open(f"chainofaction/data/run_{self.run}/{title[:-4]}.py",'w') as f:
+                    f.write(code)
+                texts = "\n".join([str(self.running_id),str(title),(problem),(desc)])
+                print(self.running_id, title, problem, desc)
+                self.db.upsert_texts(texts, 
+                                    metadata = [{"id": self.running_id, "title":title,"problem_text":problem,"skill_description":desc}\
+                                                ], ids = [str(self.running_id)])
+                self.running_id+=1
         return soln
 
     #This is the main function

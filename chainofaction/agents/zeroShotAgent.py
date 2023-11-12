@@ -97,7 +97,7 @@ def generate(messages, max_tokens = 2048, temperature = 0.0, model = "gpt-3.5-tu
 
 
 ########### AGENT CLASS ############
-class Agent:
+class ZeroShotAgent:
     def __init__(self,db,environment, model = "gpt-3.5-turbo-16k", max_tokens = 2048, temperature = 0.0, explore_ratio = 0.3, max_count = 0):
         '''
         Agent: A class that handles the generation of skills and the interaction with the environment
@@ -138,64 +138,7 @@ class Agent:
     
     
        
-    def rewrite_soln(self, problem, steps, output, fn_head): #Helper function to write/rewrite the solution
-        """
-        Helper function to write/rewrite the solution.
-
-        Args:
-            problem (str): The problem statement.
-            steps (str): The steps taken to solve the problem.
-            output (str): The current output error.
-
-        Returns:
-            str: The generated solution.
-        """
-        rewrite = self.get_prompt("soln.txt")
-        rewrite  = rewrite.replace("{Qn}",problem)+ f'\n\nThe current output error is {output}'
-        rewrite = rewrite.replace("{Steps}",steps)
-        rewrite = rewrite.replace("{fn_head}",fn_head)
-        pattern = r'^(\d+:.*?)(?=\d+:|$)'
-        skills = re.findall(pattern, steps, re.MULTILINE)
-
-        for retry in range(3):
-            try:
-                skill_index = 0
-                skills_used = []
-                skill = skills[skill_index]
-                while skill_index < len(skills): #Loop through all the skills
-                    #Query vector DB for relevant skills
-                    relevant_chunks = self.db.query([skill],n_results = 1) 
-                    skills_accepted = []
-                    #Grab titles
-                    for i, chunk in enumerate(relevant_chunks['documents'][0]):
-                        #print(relevant_chunks['metadatas'][0][i])
-                        if relevant_chunks['distances'][0][i] > 0.8:
-                            skills_accepted.append(relevant_chunks["metadatas"][0][i]['title'])
-                            skills_used.append(relevant_chunks["metadatas"][0][i]['title'])
-
-                    if skill_index == len(skills)-1:
-                        break
-                    #If no skills accepted, merge them
-                    if len(skills_accepted) == 0:
-                        skill_index +=1
-                        skill = skills[skill_index-1] + " " +skills[skill_index]
-                    else:
-                        #Else, pick the next skill
-                        skill_index +=1
-                        print(skill_index,len(skills))
-                        skill = skills[skill_index]
-                #convert skills to code
-                skills_used = search_files(skills_used, self.environment.run)
-                #Prompt and generate
-                rewrite = rewrite.replace("{Ref}",'\n\nHere are a list of relevant skills to the question'+'\n'.join(skills_used))
-                self.message.append({"role":"user","content": f"{rewrite}"})
-                soln = generate(self.message, max_tokens = 2048, temperature = 0.0, model = "gpt-3.5-turbo-16k")
-                self.message.append({"role": "assistant", "content": soln})
-            except Exception as e:
-                print("Error: Failed to generate response",e)
-                self.message.append({"role":"user","content": f"Failed to execute solution generation: {print(e)}"})
-            return soln if "soln" in locals() else None
-   
+    
     def zeroshot_soln(self, problem, steps,fn_head):
         try:
             self.message.append({"role": "user", "content": f"Here is the problem: {problem}\nHere are the identified steps: {steps}\nWrite Python code to solve the problem\n Use this function head:{fn_head}"})
@@ -231,20 +174,11 @@ class Agent:
                 passed = True #Dummy variables
                 output = ''
                 output, passed = self.environment.execute(soln, cases) #Environment implemented in env.py later
-                for i in range(10):
-                    if passed:
-                        break
-                    soln = self.rewrite_soln(problem, steps,output, fn_head)
-                    print(f"\n\nNew SOLN: {soln}\n\n")
-
-                    output, passed = self.environment.execute(soln, cases)
-                if passed:
-                    break
-                break
 
                     
             except Exception as e:
                 print(e)
+                raise e
                 print("Error: Failed to generate response")
                 self.message.append({"role":"user","content": f"Failed to execute iterative prompting: {type(e)}"})
 
@@ -255,11 +189,8 @@ class Agent:
         if success:
             self.message.append({"role": "user", "content": f"Write a description of what this program solves:\n{soln}"})
             desc = generate(self.message)
-            self.reset()
             return (soln, desc, title)
-        self.reset()
         return None
-    
     
     def reset(self):
         self.message = MemoryList(max_tokens = 3500)
