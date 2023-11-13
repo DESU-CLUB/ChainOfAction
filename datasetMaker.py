@@ -101,10 +101,6 @@ for file in files:
           else:
             continue
  """
-
-
-openai.api_key = "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"
-
 """ for i in os.listdir("chainofaction/data/code")[173:]:
     with open("chainofaction/data/code/"+i) as f:
         code = f.read()
