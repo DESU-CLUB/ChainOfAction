@@ -54,8 +54,8 @@ class MemoryList(list): #Sliding window implementation for now
 #This is a helper function to convert skills retrieved from the vector DB
 #into the relevant code
 
-def search_files(skills,run):
-    data_dir = f"chainofaction/data/run_{run}"
+def search_files(skills):
+    data_dir = f"chainofaction/data/run_5"
     all_code = []
     for skill in skills:
         #print(skill)
@@ -70,7 +70,8 @@ def search_files(skills,run):
         
 
 #This code handles the generation API calls
-def generate(messages, max_tokens = 2048, temperature = 0.0, model = "gpt-4-1106-preview"):
+def generate(messages,api_key, max_tokens = 2048, temperature = 0.0, model = "gpt-4-1106-preview"):
+    openai.api_key = api_key
     if  model in ["gpt-4-1106-preview", "gpt-4-1106-preview"]:
         params = {
             "model": model,
@@ -84,25 +85,34 @@ def generate(messages, max_tokens = 2048, temperature = 0.0, model = "gpt-4-1106
             except Exception as e:
                 raise e
                 return e
-    
-    # For older models, use the completion API with max_tokens=1024
+
+def stream_generate(messages,api_key, max_tokens = 2048, temperature = 0.0, model = "gpt-4-1106-preview"):
+    # For newer models, use the streaming API
+    openai.api_key = api_key
     params = {
         "model": model,
-        "max_tokens": min(max_tokens, 1024),
+        "max_tokens": max_tokens,
         "temperature": temperature,
-        "prompt": messages[-1]
+        "stream": True,
+        "messages": messages
     }
     for retry in range(3):
         try:
-            return openai.Completion.create(**params)["choices"][0]["text"]
-        except:
-            pass
+            partial = ""
+            for chunk in openai.ChatCompletion.create(**params):
+                if len(chunk["choices"][0]["delta"]) != 0:
+                    partial = partial+chunk["choices"][0]["delta"]["content"]
+                    yield partial
+                else:
+                    yield None
+        except Exception as e:
+            raise e
 
 
 
 ########### AGENT CLASS ############
-class Agent:
-    def __init__(self,db,environment, model = "gpt-4-1106-preview", max_tokens = 2048, temperature = 0.0, explore_ratio = 0.3, max_count = 0):
+class InferenceAgent:
+    def __init__(self,db,environment,api_key, model = "gpt-4-1106-preview", max_tokens = 2048, temperature = 0.2):
         '''
         Agent: A class that handles the generation of skills and the interaction with the environment
         model: the model to use for generation
@@ -117,36 +127,33 @@ class Agent:
         self.temperature = temperature
         self.message = MemoryList(max_tokens = 3500)
         self.db = db
-        self.explore_ratio = explore_ratio 
-        self.max_count = max_count  
+        self.api_key = api_key
         self.environment = environment 
-        self.trying = 1
-        self.data = {"problem_name":"","success":False,"one_shot":False,"chromaSuccess":False,"stepQueryPairs": {}, "unusedChroma": True}    
+        self.skills = []
+        print("INITIALISED")
 
     def get_prompt(self,task): #Helper function to get the prompt
         with open(f"chainofaction/prompts/{task}") as f:
             return f.read().strip()
 
-    def decompose(self,problem): #Helper function to decompose the problem into steps
+    def decompose(self,problem,api_key): #Helper function to decompose the problem into steps
         decompose = self.get_prompt("decompose.txt")
         decompose += "\n\n" + problem
         self.message.append({"role": "user", "content": decompose})
 
         for retry in range(3): #Loop to retry if generation fails
             try:
-                skills = generate(self.message, max_tokens = 2048, temperature = 0.0, model = "gpt-4-1106-preview")
+                skills = generate(self.message,api_key, max_tokens = 2048, temperature = 0.0, model = "gpt-4-1106-preview")
                 #print(skills)
                 self.message.append({"role": "assistant", "content": skills})
                 return skills
             except Exception as e: #Add error for model to debug
-                with open(f"chainofaction/data/run_{self.environment.run}/error.txt",'a') as f:
-                    f.write(str(e))
                 #print("Error: Failed to generate response")
                 self.message.append({"role":"user","content": f"Failed to execute solution generation: {e}"})
     
     
        
-    def rewrite_soln(self, problem, steps, output, fn_head): #Helper function to write/rewrite the solution
+    def rewrite_soln(self, problem, steps,api_key): #Helper function to write/rewrite the solution
         """
         Helper function to write/rewrite the solution.
 
@@ -159,9 +166,9 @@ class Agent:
             str: The generated solution.
         """
         rewrite = self.get_prompt("soln.txt")
-        rewrite  = rewrite.replace("{Qn}",problem)+ f'\n\nThe current output error is {output}'
+        rewrite  = rewrite.replace("{Qn}",problem)
         rewrite = rewrite.replace("{Steps}",steps)
-        rewrite = rewrite.replace("{fn_head}",fn_head)
+        rewrite = rewrite.replace("{fn_head}","")
         pattern = r'^(\d+:.*?)(?=\d+:|$)'
         skills = re.findall(pattern, steps, re.MULTILINE)
 
@@ -178,9 +185,7 @@ class Agent:
                     for i, chunk in enumerate(relevant_chunks['documents'][0]):
                         #print(relevant_chunks['metadatas'][0][i])
                         if relevant_chunks['distances'][0][i] < 1.2:
-                            self.data['unusedChroma'] = False
-                            self.data["stepQueryPairs"][f"try_{self.trying}"].append({"step":skill,"query":relevant_chunks["metadatas"][0][i]['title'], "distance":relevant_chunks['distances'][0][i]})
-                            print(self.data)
+                            self.skills.append([relevant_chunks["metadatas"][0][i]['title'],skill,relevant_chunks['distances'][0][i]])
                             skills_accepted.append(relevant_chunks["metadatas"][0][i]['title'])
                             skills_used.append(relevant_chunks["metadatas"][0][i]['title'])
 
@@ -198,118 +203,75 @@ class Agent:
                         if skill_index < len(skills):
                             skill = skills[skill_index]
                 #convert skills to code
-                skills_used = search_files(skills_used, self.environment.run)
+                skills_used = search_files(skills_used)
                 #Prompt and generate
                 rewrite = rewrite.replace("{Ref}",'\n\nHere are a list of relevant skills to the question'+'\n'.join(skills_used))
                 self.message.append({"role":"user","content": f"{rewrite}"})
-                soln = generate(self.message, max_tokens = 2048, temperature = 0.0, model = "gpt-4-1106-preview")
+                soln = generate(self.message,api_key, max_tokens = 2048, temperature = 0.0, model = "gpt-4-1106-preview")
                 self.message.append({"role": "assistant", "content": soln})
                 #print(soln)
             except Exception as e:
                 #print("Error: Failed to generate response",e)
-                with open(f"chainofaction/data/run_{self.environment.run}/error.txt",'a') as f:
-                    f.write(str(e))
                 raise e
                 self.message.append({"role":"user","content": f"Failed to execute solution generation: {print(e)}"})
             return soln if "soln" in locals() else None
    
-    def zeroshot_soln(self, problem, steps,fn_head):
+    def zero_shot(self,problem,steps,api_key):
         try:
-            self.message.append({"role": "user", "content": f"Here is the problem: {problem}\nHere are the identified steps: {steps}\nWrite Python code to solve the problem\n Use this function head:{fn_head}"})
-            soln = generate(self.message)
+            self.message.append({"role": "user", "content": f"Here is the problem: {problem}\nHere are the identified steps: {steps}\nWrite Python code to solve the problem"})
+            soln = generate(self.message,api_key)
             self.message.append({"role":"assistant","content": f"{soln}"})
             return soln
         except Exception as e:
             #print("ERROR ZERO SHOT")
-            with open(f"chainofaction/data/run_{self.environment.run}/error.txt",'w+') as f:
-                f.write("Zeroshot error"+problem[:30]+str(e))
             raise e
             return None
-   
 
-    def get_response(self,problem, cases, fn_head, title):
+    def get_response(self,problem, api_key):
         '''
         problem: description of problem
-        '''
-        self.data["problem_name"] = title
-        self.data["stepQueryPairs"] = {f"try_{self.trying}":[]}
-        success = True
-
-        steps = self.decompose(problem)
-        soln = self.zeroshot_soln(problem, steps, fn_head)
-        if not soln:
-            return None
-    
-
+        '''        
         ###Iterative prompting
+        print("Starting")
         for retry in range(3):
             #TODO
             #Check if code can get correct answer for test cases
             #If not, prompt for more code
             try:
-                passed = True #Dummy variables
-                output = ''
-                output, passed = self.environment.execute(soln, cases) #Environment implemented in env.py later
-                if passed == True:
-                    self.data['one_shot'] = True
-                    print("Setting to true")
-                    break
-                else:
-                    self.data['one_shot'] = False
-                    print("Setting one shot to false")
-
-                for i in range(3):
-
-                    print(title,"\nChromaDB (should be) checked\n")
-                    output = ""
-                    if passed:
-                        break
-                    self.trying+=1
-                    self.data["stepQueryPairs"][f"try_{self.trying}"] = []
-                    steps = self.decompose(problem)
-                    soln = self.rewrite_soln(problem, steps,output, fn_head)
-                    #print(f"\n\nNew SOLN: {soln}\n\n")
-
-                    output, passed = self.environment.execute(soln, cases)
-                if passed:
-                    break
+                steps = self.decompose(problem,api_key)
+                soln = self.rewrite_soln(problem, steps,api_key)
+                for skill in self.skills:
+                    time.sleep(0.3)
+                    yield skill
+                yield None
+                #print(f"\n\nNew SOLN: {soln}\n\n")           
                 break
 
                     
             except Exception as e:
                 print(e)
                 print("Error: Failed to generate response")
-                with open(f"chainofaction/data/run_{self.environment.run}/error.txt",'w+') as f:
-                    f.write(f"{title}"+str(e))
                 self.message.append({"role":"user","content": f"Failed to execute iterative prompting: {type(e)}"})
+        self.message.append({"role":"user","content": f"Extract out the Python code from this solution:\n{soln}"})
+        for i in stream_generate(self.message,api_key,model = "gpt-3.5-turbo-16k"):
+            time.sleep(0.3)
+            yield i
 
-        if not passed:
-            success = False
-
-        #save into chroma before return statement
-        if success:
-            self.data["success"] = True
-            if self.data["one_shot"] == True:
-                self.data["chromaSuccess"] = False
-            else:
-                self.data["chromaSuccess"] = True
-                    
-            self.message.append({"role": "user", "content": f"Write a description of what this program solves:\n{soln}"})
-            desc = generate(self.message)
-            with open(f"chainofaction/data/run_{self.environment.run}/newdesc/"+title,'w') as f:
-                f.write(desc)
-            with open(f"chainofaction/data/run_{self.environment.run}/vis/"+title,'w') as f:
-                json.dump(self.data,f)
-            self.reset()
-            return (soln, desc, title)
-        with open(f"chainofaction/data/run_{self.environment.run}/vis/"+title,'w') as f:
-            json.dump(self.data,f)
+    def get_response_zeroshot(self,problem,api_key):
+        for retry in range(3):
+            try:
+                steps = self.decompose(problem,api_key)
+                soln = self.zero_shot(problem, steps, api_key)
+                break
+            except Exception as e:
+                print(e)
+                print("Error: Failed to generate response")
+                self.message.append({"role":"user","content": f"Failed to execute zero shot: {type(e)}"})
         
-        self.reset()
-        return None
-    
-    
+        self.message.append({"role":"user","content": f"Extract out the Python code from this solution:\n{soln}"})
+        for i in stream_generate(self.message,api_key,model = "gpt-3.5-turbo-16k"):
+            yield i 
+
     def reset(self):
-        self.trying = 0
-        self.data = {"problem_name":"","success":False,"one_shot":False,"chromaSuccess":False,"stepQueryPairs": {}, "unusedChroma": False}    
         self.message = MemoryList(max_tokens = 3500)
+        

@@ -6,10 +6,9 @@ import random
 import re
 import shutil
 dataPath = "chainofaction/data/parsed_solutions"
-
 files = os.listdir(dataPath)
-
-""" for file in files:
+""" 
+for file in files:
     with open(os.path.join(dataPath,file)) as f:
         try:
             data = json.load(f)
@@ -24,11 +23,10 @@ files = os.listdir(dataPath)
                 with open("chainofaction/data/code/"+file+".py","w") as f:
                     f.write(text_content)
         except Exception as e:
-            raise e
             print(data.keys(),f)
- """
+
  
-""" 
+
 for file in files:
     with open(os.path.join(dataPath,file)) as f:
         try:
@@ -44,9 +42,9 @@ for file in files:
                     f.write(text)
         except Exception as e:
             print(data.keys(),f)
- """
 
-""" 
+
+
 def extract_testcases(text):
     pattern = re.compile(r'Input: ([^\n]+)\s+Output: ([^\n]+)', re.MULTILINE | re.DOTALL)
     matches = pattern.findall(text)
@@ -67,7 +65,7 @@ def generate_testcases(text,soln):
 
     return text
 
-for file in files[:20]:
+for file in files:
   with open(os.path.join(dataPath,file)) as f:
       data = json.load(f)
       # print(data.keys())
@@ -90,8 +88,6 @@ for file in files[:20]:
                 f.write(text)
             #get test cases if no initial testcases
             with open(f"chainofaction/data/cases/{file}.txt","w") as f:
-                f.write("\n".join(map(lambda x: repr(x),extract_testcases(text))))
-                f.write("\n")
                 f.write(generate_testcases(text,soln))
               
                 
@@ -104,16 +100,16 @@ for file in files[:20]:
             break
           else:
             continue
-
-
  """
 
 
-""" for i in os.listdir("chainofaction/data/code"):
+openai.api_key = "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"
+
+""" for i in os.listdir("chainofaction/data/code")[173:]:
     with open("chainofaction/data/code/"+i) as f:
         code = f.read()
         response = openai.ChatCompletion.create(
-            model="gpt-4",
+            model="gpt-4-1106-preview",
             messages=[{"role":"user","content":"Describe the code and what it does:\n\n"+code+"\n\n in 100-200 tokens"}],
             max_tokens=300,
             temperature=0
@@ -124,18 +120,16 @@ for file in files[:20]:
         f.write(response)
 
  """
-""" 
-#Change all description from py to txt
-for i in os.listdir("chainofaction/data/descriptions"):
-  shutil.move("chainofaction/data/descriptions/"+i,"chainofaction/data/descriptions/"+i[:-2]+"txt") """
-
 
 import pandas as pd
 texts = []
 titles = []
 problems = []
 #Takes problem, solution and description and turn into csv file
+allcases = os.listdir("chainofaction/data/fullcases")
 for i in os.listdir("chainofaction/data/descriptions"):
+  if i[:-3]+"json" not in allcases:
+     continue
   with open("chainofaction/data/descriptions/"+i) as f:
     text = f.read()
     texts.append(text)
@@ -146,4 +140,4 @@ for i in os.listdir("chainofaction/data/descriptions"):
 
   df = pd.DataFrame({"problem_text":problems,"title":titles,"skill_description":texts})
   #Convert into tsv file called leetcode.tsv. I need an id column by renaming index to id
-df.to_csv("chainofaction/data/leetcode.tsv",sep="\t",index_label="id")
+df.to_csv("chainofaction/data/leetcode.tsv",sep="\t",index_label="id") 

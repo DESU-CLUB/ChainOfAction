@@ -20,7 +20,7 @@ class MemoryList(list): #Sliding window implementation for now
     def __init__(self, *args, max_tokens = 3500):
         super().__init__(*args)
         self.max_tokens = max_tokens
-        self.tokenizer = tiktoken.encoding_for_model("gpt-3.5-turbo-16k")
+        self.tokenizer = tiktoken.encoding_for_model("gpt-4")
         
     #Add smth to the list -> remove first item until total tokens < 4000
     def append(self, item):
@@ -67,8 +67,8 @@ def search_files(skills,run):
         
 
 #This code handles the generation API calls
-def generate(messages, max_tokens = 2048, temperature = 0.0, model = "gpt-3.5-turbo-16k"):
-    if  model in ["gpt-3.5-turbo-16k", "gpt-3.5-turbo-16k"]:
+def generate(messages, max_tokens = 2048, temperature = 0.0, model = "gpt-4"):
+    if  model in ["gpt-4", "gpt-4"]:
         params = {
             "model": model,
             "max_tokens": max_tokens,
@@ -98,7 +98,7 @@ def generate(messages, max_tokens = 2048, temperature = 0.0, model = "gpt-3.5-tu
 
 ########### AGENT CLASS ############
 class ZeroShotAgent:
-    def __init__(self,db,environment, model = "gpt-3.5-turbo-16k", max_tokens = 2048, temperature = 0.0, explore_ratio = 0.3, max_count = 0):
+    def __init__(self,db,environment, model = "gpt-4", max_tokens = 2048, temperature = 0.0, explore_ratio = 0.3, max_count = 0):
         '''
         Agent: A class that handles the generation of skills and the interaction with the environment
         model: the model to use for generation
@@ -128,7 +128,7 @@ class ZeroShotAgent:
 
         for retry in range(3): #Loop to retry if generation fails
             try:
-                skills = generate(self.message, max_tokens = 2048, temperature = 0.0, model = "gpt-3.5-turbo-16k")
+                skills = generate(self.message, max_tokens = 2048, temperature = 0.0, model = "gpt-4")
                 print(skills)
                 self.message.append({"role": "assistant", "content": skills})
                 return skills
@@ -189,6 +189,8 @@ class ZeroShotAgent:
         if success:
             self.message.append({"role": "user", "content": f"Write a description of what this program solves:\n{soln}"})
             desc = generate(self.message)
+            with open(f"chainofaction/data/run_{self.environment.run}/newdesc/"+title,'w') as f:
+                f.write(soln)
             return (soln, desc, title)
         return None
     
