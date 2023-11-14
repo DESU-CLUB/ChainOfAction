@@ -1,0 +1,1 @@
+189-rotate-array.json.txtinteger modulo by zero
